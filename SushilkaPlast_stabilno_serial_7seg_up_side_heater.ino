@@ -40,6 +40,7 @@ enum DryerMode {
 };
 
 static DryerMode g_mode = MODE_VIEW;
+static DryerMode g_returnModeAfterSet = MODE_VIEW;
 
 /* -------------------- Heater states -------------------- */
 enum AutoHeatState {
@@ -52,6 +53,7 @@ static AutoHeatState g_heatState = HEAT_OFF;
 
 /* -------------------- State -------------------- */
 static int16_t  g_targetTemp = 75;
+static int16_t  g_savedTargetTemp = 75;
 static int16_t  g_currentTemp = 0;
 
 static bool     g_tempEdited = false;
@@ -143,7 +145,7 @@ static void applyHeatState(AutoHeatState state) {
       break;
   }
 
-  /* Re-init MAX after relay switching */
+  /* Reset MAX after relay switching */
   resetDisplayDriver();
   g_lastMaxResetMs = millis();
 }
@@ -234,16 +236,31 @@ static void applyAutoControlNow(bool showMessages) {
   }
 }
 
+static void enterSetTempMode(bool fromAuto) {
+  if (!g_tempEdited) {
+    g_tempEdited = true;
+    g_blinkState = false;
+    g_blinkTimer = millis();
+    g_editTimer = millis();
+
+    g_savedTargetTemp = g_targetTemp;
+    g_returnModeAfterSet = fromAuto ? MODE_AUTO : MODE_VIEW;
+    g_mode = MODE_SET_TEMP;
+
+    if (!fromAuto) {
+      g_targetTemp = 75;
+    }
+  } else {
+    g_editTimer = millis();
+  }
+}
+
 /* -------------------- Button handlers -------------------- */
 void onPlusClick() {
   if (g_mode == MODE_AUTO) {
-    return;
-  }
-
-  if (!g_tempEdited) {
-    g_tempEdited = true;
-    g_mode = MODE_SET_TEMP;
-    g_targetTemp = 75;
+    enterSetTempMode(true);
+  } else if (g_mode != MODE_SET_TEMP) {
+    enterSetTempMode(false);
   }
 
   if (g_targetTemp < 90) {
@@ -255,13 +272,9 @@ void onPlusClick() {
 
 void onMinusClick() {
   if (g_mode == MODE_AUTO) {
-    return;
-  }
-
-  if (!g_tempEdited) {
-    g_tempEdited = true;
-    g_mode = MODE_SET_TEMP;
-    g_targetTemp = 75;
+    enterSetTempMode(true);
+  } else if (g_mode != MODE_SET_TEMP) {
+    enterSetTempMode(false);
   }
 
   if (g_targetTemp > 50) {
@@ -279,6 +292,7 @@ void onStartClick() {
 
   if (g_mode == MODE_SET_TEMP || g_mode == MODE_VIEW) {
     g_mode = MODE_AUTO;
+    g_returnModeAfterSet = MODE_AUTO;
     g_tempEdited = false;
     g_showTargetUntilMs = 0;
 
@@ -302,8 +316,10 @@ void onStartClick() {
 
 void onStopClick() {
   g_mode = MODE_VIEW;
+  g_returnModeAfterSet = MODE_VIEW;
   g_tempEdited = false;
   g_targetTemp = 75;
+  g_savedTargetTemp = 75;
   g_showTargetUntilMs = 0;
 
   applyHeatState(HEAT_OFF);
@@ -392,8 +408,15 @@ void loop() {
   /* ----- SET TEMP BLINK ----- */
   if (g_mode == MODE_SET_TEMP) {
     if ((uint32_t)(now - g_editTimer) > SET_TEMP_TIMEOUT_MS) {
-      g_mode = MODE_VIEW;
+      if (g_returnModeAfterSet == MODE_AUTO) {
+        g_targetTemp = g_savedTargetTemp;
+        g_mode = MODE_AUTO;
+      } else {
+        g_mode = MODE_VIEW;
+      }
+
       g_tempEdited = false;
+      g_showTargetUntilMs = 0;
     } else {
       if ((uint32_t)(now - g_blinkTimer) >= BLINK_PERIOD_MS) {
         g_blinkTimer = now;
